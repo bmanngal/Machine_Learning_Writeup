@@ -1,0 +1,114 @@
+Practical Machine Learning- Course Project Writeup
+=================================================
+For this assignment the goal is to build a classifier for 5 different ways individuals perform barbell lifts.  A correct lift is coded as class {A} while four other incorrect type of lifts are classified as {B, C, D, E}.  A variety of measurements were taken from accelerometers on the belt, forearm, and arm of subjects. These measurements constitute the features (predictors) of the model. 
+
+I attempted to fit a Support Vector Machine with Radial Basis Kernel using the caret package. 
+
+```{r}
+#load packages
+require(caret);require(lattice);require(ggplot2);require(kernlab);require(corrplot)
+# load data
+raw.data<-read.csv('pml-training.csv')
+
+```
+
+Prior to calibrating the model some a priori feature selection was done.  Firstly, user identifier was eliminated.  The assumption is that with feedback about correct/incorrect performance of the task the individual performing the task can learn and modify his/her behaviour.  Our model will not capture this dynamic which would deteriorate the accuracy in the presence of behavioural change. Secondly, higher frequency measurements were omitted and only data post lift is retained.  This means the model can classify the lift as correct or any of the four other categories only after the lift is complete.  This modeling choice reduced the number of observations and features considerably.
+
+```{r}
+# list of features retained for model calibration
+my.features<-c('roll_belt','pitch_belt','yaw_belt','total_accel_belt','gyros_belt_x',
+               'gyros_belt_y','gyros_belt_z','accel_belt_x','accel_belt_y','accel_belt_z',
+               'magnet_belt_x','magnet_belt_y','magnet_belt_z','roll_arm','pitch_arm',
+               'yaw_arm','total_accel_arm','gyros_arm_x','gyros_arm_y','gyros_arm_z',
+               'accel_arm_x','accel_arm_y','accel_arm_z','magnet_arm_x','magnet_arm_y',
+               'magnet_arm_z','roll_dumbbell','pitch_dumbbell','yaw_dumbbell',
+               'total_accel_dumbbell','gyros_dumbbell_x','gyros_dumbbell_y','gyros_dumbbell_z',
+               'accel_dumbbell_x','accel_dumbbell_y','accel_dumbbell_z','magnet_dumbbell_x',
+               'magnet_dumbbell_y','magnet_dumbbell_z','roll_forearm','pitch_forearm',
+               'yaw_forearm','total_accel_forearm','gyros_forearm_x','gyros_forearm_y',
+               'gyros_forearm_z','accel_forearm_x','accel_forearm_y','accel_forearm_z',
+               'magnet_forearm_x','magnet_forearm_y','magnet_forearm_z')
+
+
+all.data<-raw.data[,c(my.features,"classe")] # extract the features and class from data frame
+set.seed(1981) # set seed for replication
+inTrain<-createDataPartition(raw.data$classe, p =.70, list=FALSE) # partition data
+```
+
+For computational reasons it is recommended that the **train** function call should be used with matrix rather than formula expression.  Therefore, below I split the data into feature and class matrices.
+
+```{r}
+training.features<-all.data[inTrain,my.features] # training features
+testing.features<-all.data[-inTrain,my.features] # testing features
+training.class<-all.data[inTrain,'classe'] # training class
+testing.class<-all.data[-inTrain,'classe'] # testing class
+```
+
+Looking at the distribution of the classes we can see that there is no class imbalance and therefore the goal of accuracy maximization should be sufficient.  If there was class imbalance alternative optimization criteria would be required.
+
+```{r}
+colours = c("red", "yellow", "green", "violet", "orange") 
+pie(table(training.class), col=colours) # generate a pie chart
+```
+
+All the features potentially contain information for the classification task.  None of the predictors' variance is near zero as can be seen in the below table:
+
+```{r}
+nearZeroVar(training.features,  saveMetrics = TRUE)
+```
+
+Some features do exhibit high correlation but few enough that it was decided best to forego any dimension reduction techniques such as PCA. SVM with Radial Basis Kernel is flexible enough to deal with correlated features to make class distinctions and at the same time PCA computation is unlikely to reduce computational cost of the cost function minimization in the SVM algorithm. 
+
+```{r}
+# visualisation of the correlation matrix. 
+cor <- cor(training.features, use="pairwise", method="pearson") # calculate pairwise correlation
+ord <- order(cor[1,]);cor <- cor[ord, ord] # sort the correlation matrix
+corrplot(cor, method = "ellipse", type = "lower",tl.cex = .6)
+```
+
+It is usual for features to be standardized prior to calibrating SVM. In our case the scale of features is very different so I elect to pre process the features in the call to the **train** function.  Below table shows the different scales of the features.
+
+```{r}
+str(training.features)
+```
+
+At this point we are ready to calibrate the SVM model.  Due to computational demand we will stick with caret package's defaults for the tuning parameters. The two tuning parameters for Radial Basis Kernel SVM is the Cost scalar used in the cost function and the Sigma scalar used in the kernel.  
+
+```{r}
+# NOTE: model selection takes a very long time
+svm.model<-train(x=training.features,
+				y=training.class,
+				method='svmRadial',
+				preProc = c("center", "scale"),
+				tuneLength = 10)
+# print model output. 
+svm.model
+```
+
+We can see that the optimal scalar C was 128. The sigma was held constant at .0141467. The accuracy on the training set was .9866369.  While we can see that the accuracy is increasing with higher C it was decided to leave C at 128 since the difference between the accuracy of the model at C =64 and C= 128 is less than the standard deviation of accuracy of .00174.
+
+Inspecting the accuracy metric visually versus the cost parameter highlights the fact that increasing C is unlikely to improve the model and that using C=64 is a suitable substitution to 128.
+
+```{r}
+plot(svm.model)
+```
+
+With the calibrated model we can now test the accuracy on the testing dataset
+
+```{r}
+my.predictions<-predict(svm.model,testing.features) # generate predictions on the test set
+confusionMatrix(my.predictions,testing.class) # create a confusion table
+```
+
+As we can see the model has an accuracy rate of .9937 with a confidence interval of .9915 to .9957. Sensitivity and specificity for each class is very high.  This can be considered a well calibrated model with strong accuracy. 
+
+Finally, we can perform forecasts on the test data of the assignment.
+
+```{r}
+final.validation.data<-read.csv('pml-testing.csv')
+final.validation.features<-final.validation.data[,my.features]
+validation.predictions<-predict(svm.model,final.validation.features)
+# i will omit the final results.  The output matches the test data exactly for all 20 test cases
+```
+
+Thank you for reading.  
